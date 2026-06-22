@@ -1,0 +1,28 @@
+[project]
+name = "data-platform"
+version = "0.1.0"
+description = "Generic data platform components for medallion pipelines, datalake access and shared utilities."
+authors = [
+    { name = "Your Team" }
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "pandas>=2.0.0",
+    "requests>=2.31.0",
+    "python-dateutil>=2.8.2",
+    "pyarrow>=12.0.0",
+    "google-cloud-storage>=2.10.0"
+]
+
+[tool.poetry]
+packages = [
+    { include = "data_platform" }
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
