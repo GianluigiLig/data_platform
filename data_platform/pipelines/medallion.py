@@ -64,6 +64,12 @@ class SilverPipeline:
                 except Exception:
                     stats["failed"] += 1
                     logger.exception("Unable to read bronze input for silver: %s", bronze_key)
+                    # Historical behavior compatibility:
+                    # the old solar silver pipeline did not drop the device when
+                    # a bronze file was missing or unreadable. It still passed an
+                    # empty payload to the source transform, which produced the
+                    # expected timestamp x device grid filled with missing values.
+                    bronze_payloads.append(BronzePayload(request=request, payload=[]))
                     continue
 
             try:
@@ -93,7 +99,15 @@ class GoldPipeline:
     def __init__(self, lake: DataLake) -> None:
         self.lake = lake
 
-    def run(self, *, context: PipelineContext, processor: GoldProcessor, append_if_exists: bool = True) -> dict[str, int]:
+    def run(
+        self,
+        *,
+        context: PipelineContext,
+        processor: GoldProcessor,
+        append_if_exists: bool = True,
+        deduplicate_on: str | list[str] | tuple[str, ...] | None = None,
+        deduplicate_keep: str = "last",
+    ) -> dict[str, int]:
         input_keys = processor.get_inputs(context)
         datasets = {name: self.lake.read_parquet(key) for name, key in input_keys.items()}
         output = processor.build(datasets, context)
@@ -104,7 +118,26 @@ class GoldPipeline:
             import pandas as pd
 
             old = self.lake.read_parquet(key)
-            df_to_write = pd.concat([old, df_to_write], ignore_index=True).drop_duplicates()
+            df_to_write = pd.concat([old, df_to_write], ignore_index=True)
+
+            if deduplicate_on is None:
+                df_to_write = df_to_write.drop_duplicates()
+            else:
+                subset = [deduplicate_on] if isinstance(deduplicate_on, str) else list(deduplicate_on)
+                existing_subset = [col for col in subset if col in df_to_write.columns]
+                if existing_subset:
+                    df_to_write = df_to_write.drop_duplicates(
+                        subset=existing_subset,
+                        keep=deduplicate_keep,
+                    )
+                    df_to_write = df_to_write.sort_values(existing_subset).reset_index(drop=True)
+                else:
+                    logger.warning(
+                        "Gold deduplication columns not found: requested=%s available=%s. Falling back to full-row deduplication.",
+                        subset,
+                        list(df_to_write.columns),
+                    )
+                    df_to_write = df_to_write.drop_duplicates()
 
         self.lake.write_parquet(key, df_to_write)
         logger.info("Gold uploaded asset=%s source=%s key=%s rows=%d", context.asset, context.source, key, len(df_to_write))
